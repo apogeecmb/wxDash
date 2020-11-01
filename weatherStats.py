@@ -118,6 +118,7 @@ class WeatherPlotter:
         times = [0]*numSteps
         valuePerStep = np.zeros(numSteps)
         tablePos = 0
+        noDataSteps = []
         for i in range(numSteps):
             # Calculate value for this step
             if (steps): # steps provided
@@ -137,7 +138,6 @@ class WeatherPlotter:
                 while (dataArray[tablePos,0] < stepEnd):
                     if (stepCalc == None):
                         stepCalc = DataCalculation(calcType) # calculation at this step
-                
                     stepCalc.update(dataArray[tablePos, 1])
                     tablePos += 1
             except IndexError: # end of data
@@ -147,7 +147,15 @@ class WeatherPlotter:
             if (stepCalc): # add data point
                 times[i] = datetime.datetime.fromtimestamp(stepStart).strftime("%Y-%m-%d %H:%M")
                 valuePerStep[i] = stepCalc.calc
-    
+            else: # no data available
+                noDataSteps.append(i)
+        
+        # Remove any empty data steps
+        noDataSteps.sort(reverse=True)
+        for step in noDataSteps:
+            del times[step]
+            valuePerStep = np.delete(valuePerStep, step)
+
         return times, valuePerStep
 
     def getTempPlotData(self, startTime, endTime, step):
@@ -177,14 +185,20 @@ class WeatherPlotter:
     
         ax.set_title("Temperature Summary Plot - {} - {} to {}".format(step.name.capitalize(), startTime.strftime("%Y-%m-%d %H:%M"), endTime.strftime("%Y-%m-%d %H:%M")))
    
-    def getAvg(self, entry, startTimeEpoch, endTimeEpoch):
+    def getAvg(self, entry, tableName, startTimeEpoch, endTimeEpoch):
         # Get min and max and average
-        minTable = self.getFromDatabase('SELECT dateTime, {} FROM archive_day_{} WHERE dateTime between {} AND {}'.format(CalcType.MIN.name, entry, startTimeEpoch, endTimeEpoch))
-        maxTable = self.getFromDatabase('SELECT dateTime, {} FROM archive_day_{} WHERE dateTime between {} AND {}'.format(CalcType.MAX.name, entry, startTimeEpoch, endTimeEpoch))
+        if ("day" in tableName):
+            minTable = self.getFromDatabase('SELECT dateTime, {} FROM {} WHERE dateTime between {} AND {}'.format(CalcType.MIN.name, tableName, startTimeEpoch, endTimeEpoch))
+            maxTable = self.getFromDatabase('SELECT dateTime, {} FROM {} WHERE dateTime between {} AND {}'.format(CalcType.MAX.name, tableName, startTimeEpoch, endTimeEpoch))
                 
-        dataArray = np.array(minTable)
-        for i in range(len(maxTable)):
-            dataArray[i,1] = (minTable[i][1] + maxTable[i][1]) / 2.0
+            dataArray = np.array(minTable)
+            for i in range(len(maxTable)):
+                dataArray[i,1] = (minTable[i][1] + maxTable[i][1]) / 2.0
+
+        else: # return all points
+            dataTable = self.getFromDatabase('SELECT dateTime, {} FROM {} WHERE dateTime between {} AND {}'.format(entry, tableName, startTimeEpoch, endTimeEpoch))
+            dataArray = np.array(dataTable)
+
 
         return dataArray
           
@@ -192,37 +206,37 @@ class WeatherPlotter:
         startTimeEpoch = datetime.datetime.timestamp(startTime)
         endTimeEpoch = datetime.datetime.timestamp(endTime)
         
+        dataArray = None
+        tableName = None
+        times = None
+        values = None
+        steps = []
+    
         # Get requested data for requested step
         if (step == PlotStep.ALL): # return all points in main database table
-            dataTable = self.getFromDatabase('SELECT dateTime, {} FROM archive WHERE dateTime between {} AND {}'.format(entry, startTimeEpoch, endTimeEpoch))
-            dataArray = np.array(dataTable)
-
-            dates = [datetime.datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M") for t in dataArray[:,0]]
-            return dates, dataArray[:,1]
+            tableName = "archive"
+            timeStep = "all"
+            databaseEntry = entry
             
         elif (step == PlotStep.HOURLY):
-            dataTable = self.getFromDatabase('SELECT dateTime, {} FROM archive WHERE dateTime between {} AND {}'.format(entry, startTimeEpoch, endTimeEpoch))
-            dataArray = np.array(dataTable)
-        
-            times, valuePerHr = self.calcPlotData(startTimeEpoch, endTimeEpoch, 3600.0, dataArray, calcType) # 1 hour steps
-            return times, valuePerHr
+            tableName = "archive"
+            databaseEntry = entry
+            timeStep = 3600.0
 
         elif (step == PlotStep.DAILY): # daily data is already included in database
-            dataTable = self.getFromDatabase('SELECT dateTime, {} FROM archive_day_{} WHERE dateTime between {} AND {}'.format(calcType.name, entry, startTimeEpoch, endTimeEpoch))
-            dataArray = np.array(dataTable)
-            dates = [datetime.datetime.fromtimestamp(t).strftime("%y-%m-%d") for t in dataArray[:,0]]
-            return dates, dataArray[:,1]
+            tableName = "archive_day_{}".format(entry)
+            timeStep = 86400.0
+            databaseEntry = calcType.name
 
         elif (step == PlotStep.WEEKLY):
-            dataTable = self.getFromDatabase('SELECT dateTime, {} FROM archive_day_{} WHERE dateTime between {} AND {}'.format(calcType.name, entry, startTimeEpoch, endTimeEpoch))
-            dataArray = np.array(dataTable)
-            
-            times, valuePerWeek = self.calcPlotData(startTimeEpoch, endTimeEpoch, 86400.0*7, dataArray, calcType) # 1 week steps
-
-            return times, valuePerWeek
+            tableName = "archive_day_{}".format(entry)
+            timeStep = 86400.0 * 7
+            databaseEntry = calcType.name
         
         elif (step == PlotStep.MONTHLY):
+            tableName = "archive_day_{}".format(entry)
             timeStep = 86400.0 * 7 * 30
+            databaseEntry = calcType.name
             # Generate start of month times
             steps = [startTime]
             while (steps[-1] + datetime.timedelta(days=monthrange(steps[-1].year, steps[-1].month)[1]) < endTime):
@@ -236,36 +250,33 @@ class WeatherPlotter:
                 steps.append(datetime.datetime(year, month, 1))
             steps = [datetime.datetime.timestamp(dt) for dt in steps]
         
-            # Get data from database
-            if (calcType == CalcType.AVG):
-                dataArray = self.getAvg(entry, startTimeEpoch, endTimeEpoch)
-            
-            else:    
-                dataTable = self.getFromDatabase('SELECT dateTime, {} FROM archive_day_{} WHERE dateTime between {} AND {}'.format(calcType.name, entry, startTimeEpoch, endTimeEpoch))
-                dataArray = np.array(dataTable)
-       
-            # Create plot
-            times, valuePerMonth = self.calcPlotData(startTimeEpoch, endTimeEpoch, timeStep, dataArray, calcType, steps) # 1 month steps
-       
-            return times, valuePerMonth
- 
         elif (step == PlotStep.ANNUALLY):
-            timeStep = 86400.0 * 7 * 30
-            # Generate start of month times
+            tableName = "archive_day_{}".format(entry)
+            timeStep = 86400.0 * 7 * 365
+            databaseEntry = calcType.name
+            # Generate start of year times
             steps = [startTime]
             while (datetime.datetime(steps[-1].year + 1, 1, 1) < endTime):
                 steps.append(datetime.datetime(steps[-1].year + 1, 1, 1))
         
             steps = [datetime.datetime.timestamp(dt) for dt in steps]
         
-            # Get data from database
-            dataTable = self.getFromDatabase('SELECT dateTime, {} FROM archive_day_{} WHERE dateTime between {} AND {}'.format(calcType.name, entry, startTimeEpoch, endTimeEpoch))
+        # Check calculation type
+        if (calcType == CalcType.AVG):
+            dataArray = self.getAvg(entry, tableName, startTimeEpoch, endTimeEpoch)
+        else:
+            #dataTable = self.getFromDatabase('SELECT dateTime, {} FROM archive WHERE dateTime between {} AND {}'.format(entry, startTimeEpoch, endTimeEpoch))
+            dataTable = self.getFromDatabase('SELECT dateTime, {} FROM {} WHERE dateTime between {} AND {}'.format(databaseEntry, tableName, startTimeEpoch, endTimeEpoch))
             dataArray = np.array(dataTable)
-        
-            # Create plot
-            times, valuePerMonth = self.calcPlotData(startTimeEpoch, endTimeEpoch, timeStep, dataArray, calcType, steps) # 1 month steps
-       
-            return times, valuePerMonth
+
+        # Check if plot data needs to be calculated
+        if (dataArray is not None):
+            if (timeStep == 'all'):
+                times = [datetime.datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M") for t in dataArray[:,0]]
+                values = dataArray[:,1]
+            else: # calculate values for each time step
+                times, values = self.calcPlotData(startTimeEpoch, endTimeEpoch, timeStep, dataArray, calcType, steps)
+        return times, values
 
     def createDataPlot(self, entry, startTime, endTime, step, calcType=CalcType.MAX, ax=None):
         startTimeEpoch = datetime.datetime.timestamp(startTime)
@@ -287,6 +298,24 @@ class WeatherPlotter:
         ax.set_ylabel("{} ({})".format(capitalizeFirst(entry), self.units[entry]))
 
         return ax
+
+    def getPlotData(self, plotRequest):
+        dataOut = None
+
+        if (plotRequest['type'] == 'tempPlot'):
+            dates, data, types = self.getTempPlotData(plotRequest['startTime'], plotRequest['endTime'], plotRequest['plotStep'])
+            dataRequest = copy.deepcopy(plotRequest)
+            dataRequest['dates'] = dates
+            dataRequest['data'] = data
+            dataRequest['types'] = types
+            dataOut = dataRequest 
+        else:
+            dates, data = self.getData(plotRequest['data_type'], plotRequest['startTime'], plotRequest['endTime'], plotRequest['plotStep'], plotRequest['calcType'])
+            dataRequest = copy.deepcopy(plotRequest)
+            dataRequest.update({'type': 'standard', 'dates': dates, 'data': data})
+            dataOut = dataRequest 
+
+        return dataOut
 
 
 class WeatherPlotThread(Thread):
