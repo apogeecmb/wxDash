@@ -97,33 +97,26 @@ weatherPlot = WeatherPlotter(path, units)
 
 inQueue = Queue()
 outQueue = Queue() 
-#weatherPlotThread = WeatherPlotThread(weatherPlot, inQueue, outQueue)
-#weatherPlotThread.start()
-
-app = dash.Dash(__name__, update_title=None, requests_pathname_prefix='/wx/')
 
 # User authentication
 #auth = dash_auth.BasicAuth(app, VALID_USERNAME_PASSWORD_PAIRS) # uncomment to enable simple user authentication
 
+# App layout and initialization function
+def serve_layout():
+    endTime = datetime.datetime.now()
+    
+    # Get current weather conditions
+    startTime = datetime.datetime(endTime.year, endTime.month, endTime.day, 0, 0, 0)
+    graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'outTemp', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
+    curTempGraph = get_graph_data(graphData)
+    graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'rain', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
+    curRainGraph = get_graph_data(graphData)
+    graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'windSpeed', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
+    curWindGraph = get_graph_data(graphData)
+    currentConditions = get_current_weather()
 
-#df = pd.read_csv('https://gist.githubusercontent.com/chriddyp/5d1ea79569ed194d432e56108a04d188/raw/a9f9e8076b837d541398e999dcbac2b2826a81f8/gdp-life-exp-2007.csv')
-
-#figOrig = px.scatter(df, x="gdp per capita", y="life expectancy", size="population", color="continent", hover_name="country", log_x=True, size_max=60)
-figOrig = {}
-endTime = datetime.datetime.now()
-
-# Get current weather
-currentConditions = get_current_weather()
-startTime = datetime.datetime(endTime.year, endTime.month, endTime.day, 0, 0, 0)
-graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'outTemp', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
-curTempGraph = get_graph_data(graphData)
-graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'rain', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
-curRainGraph = get_graph_data(graphData)
-graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'windSpeed', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
-curWindGraph = get_graph_data(graphData)
-
-# Layout app
-app.layout = html.Div(style={'width': '1000px'}, children=[
+    # Layout app
+    return html.Div(style={'width': '1000px'}, children=[
     html.H1(children='Weather Status'),
 
     # Current weather
@@ -284,7 +277,7 @@ app.layout = html.Div(style={'width': '1000px'}, children=[
  
     dcc.Graph(
         id='wx-graph',
-        figure=figOrig
+        figure={}
     ),
 
     #dcc.Interval(
@@ -297,7 +290,10 @@ app.layout = html.Div(style={'width': '1000px'}, children=[
     ], style={'display': 'inline-block'})
 
 #], style={'columnCount': 1})
-])
+    ])
+
+app = dash.Dash(__name__, update_title=None, requests_pathname_prefix='/wx/')
+app.layout = serve_layout
 
 # Callbacks
 #@app.callback([dash.dependencies.Output('cur-time-div', 'children'),
@@ -331,7 +327,7 @@ def update_graph(n_clicks, data_type, start_time, end_time, calc_type, plot_step
     #global figOrig
 
     if (n_clicks == 0): # Ignore if button not clicked
-        return figOrig
+        return {}
     
     # Get inputs
     startTime = datetime.datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
