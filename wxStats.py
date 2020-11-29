@@ -68,31 +68,9 @@ def get_current_weather():
         "{:.1f} mph".format(weatherPlot.currentConditions['wind']['gust'])
     ]
 
-def get_graph_data(graphData):
-
-        if (graphData == None):
-            return {}
-        
-        if (graphData['type'] == 'tempPlot'):
-            df = pd.DataFrame({
-                "dates": graphData['dates'],
-                graphData['data_type']: graphData['data'],
-                "types": graphData['types']})
-            title = "Temperature Summary Plot - {} - {} to {}".format(graphData['plotStep'].name.capitalize(), startTime.strftime("%Y-%m-%d %H:%M"), endTime.strftime("%Y-%m-%d %H:%M"))
-            fig = px.scatter(df, x="dates", y=graphData['data_type'], color="types", title=title)
-        
-        else: # standard
-            df = pd.DataFrame({
-                "dates": graphData['dates'],
-                graphData['data_type']: graphData['data']})
-            title = "{} of {} - {} - {} to {}".format(graphData['calcType'].name.capitalize(), capitalizeFirst(graphData['data_type']), graphData['plotStep'].name.capitalize(), graphData['startTime'].strftime("%Y-%m-%d %H:%M"), graphData['endTime'].strftime("%Y-%m-%d %H:%M"))
-            fig = px.scatter(df, x="dates", y=graphData['data_type'], title=title)
-
-        return fig
-
 # Weather plotter
 path = "/home/weewx/archive/weewx.sdb" 
-units = {"outTemp": "deg F", "rain": "in", "rainRate": "in/hr"}
+units = {"outTemp": "{}F".format(u'\N{DEGREE SIGN}'), "rain": "in", "rainRate": "in/hr", "windSpeed": 'mph'}
 weatherPlot = WeatherPlotter(path, units)
 
 inQueue = Queue()
@@ -107,16 +85,24 @@ def serve_layout():
     
     # Get current weather conditions
     startTime = datetime.datetime(endTime.year, endTime.month, endTime.day, 0, 0, 0)
-    graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'outTemp', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
-    curTempGraph = get_graph_data(graphData)
-    graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'rain', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
-    curRainGraph = get_graph_data(graphData)
-    graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'windSpeed', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
-    curWindGraph = get_graph_data(graphData)
+    curTempGraph = weatherPlot.getGraph({'type': "standard", 'data_type': 'outTemp', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
+    #curTempGraph = weatherPlot.getGraph(graphData)
+    yaxis_title = "{} ({})".format('outTemp', weatherPlot.units['outTemp'])
+    curTempGraph.update_layout(xaxis_title="Date", yaxis_title=yaxis_title)
+    #graphData = weatherPlot.getPlotData({'type': "standard", 'data_type': 'rain', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
+    curRainGraph = weatherPlot.getGraph({'type': "rainPlot", 'data_type': 'rain', 'startTime': startTime, 'endTime': endTime})
+    #graphData = weatherPlot.getRainPlotData(startTime, endTime)
+    #curRainGraph = weatherPlot.getGraph(graphData)
+    yaxis_title = "{} ({})".format('rain', weatherPlot.units['rain'])
+    curRainGraph.update_layout(xaxis_title="Date", yaxis_title=yaxis_title)
+    curWindGraph = weatherPlot.getGraph({'type': "standard", 'data_type': 'windSpeed', 'startTime': startTime, 'endTime': endTime, 'plotStep': PlotStep.ALL, 'calcType': CalcType.AVG})
+    #curWindGraph = weatherPlot.getGraph(graphData)
+    yaxis_title = "{} ({})".format('windSpeed', weatherPlot.units['windSpeed'])
+    curWindGraph.update_layout(xaxis_title="Date", yaxis_title=yaxis_title)
     currentConditions = get_current_weather()
 
     # Layout app
-    return html.Div(style={'width': '1000px'}, children=[
+    return html.Div(style={'width': '600px'}, children=[
     html.H1(children='Weather Status'),
 
     # Current weather
@@ -145,19 +131,19 @@ def serve_layout():
     ], className='row'),
     html.Div([
         html.Div("Rain Rate:", className='column_label'),
-        html.Div(id='cur-rain-rate-div', children=currentConditions[3], className='column_data')
+        html.Div(id='cur-rain-rate-div', children=currentConditions[4], className='column_data')
     ], className='row'),
     html.Div([
         html.Div("Wind Speed:", className='column_label'),
-        html.Div(id='cur-wind-speed-div', children=currentConditions[4], className='column_data')
+        html.Div(id='cur-wind-speed-div', children=currentConditions[5], className='column_data')
     ], className='row'),
     html.Div([
         html.Div("Wind Direction:", className='column_label'),
-        html.Div(id='cur-wind-dir-div', children=currentConditions[5], className='column_data')
+        html.Div(id='cur-wind-dir-div', children=currentConditions[6], className='column_data')
     ], className='row'),
     html.Div([
         html.Div("Wind Gust:", className='column_label'),
-        html.Div(id='cur-wind-gust-div', children=currentConditions[6], className='column_data')
+        html.Div(id='cur-wind-gust-div', children=currentConditions[7], className='column_data')
     ], className='row'),
     dcc.Interval( # current weather update interval
         id='cur-weather-interval',
@@ -166,29 +152,34 @@ def serve_layout():
     #]),
     #], style={'width':"100%"}),
     #], style={'display': 'inline-block'}),
-    ], style={'width': '1000px'}),
+    ], style={'width': '600px'}),
     # Current weather plots
-    html.Div([   
+    html.Div([
         html.H3(children='Current Weather Graphs'),
-        dcc.Graph(
-            id='cur-temp-graph',
-            figure=curTempGraph
-        ),
-        dcc.Graph(
-            id='cur-rain-graph',
-            figure=curRainGraph
-        ),
-        dcc.Graph(
-            id='cur-wind-graph',
-            figure=curWindGraph
-        ),
+        html.Div([
+            dcc.Graph(
+                id='cur-temp-graph',
+                figure=curTempGraph
+            ),
+        ]),
+        html.Div([
+            dcc.Graph(
+                id='cur-rain-graph',
+                figure=curRainGraph
+            ),
+        ]),
+        html.Div([
+            dcc.Graph(
+                id='cur-wind-graph',
+                figure=curWindGraph
+            ),
+        ]),
     ]),
  
     # Custom weather plots
     #html.Br(),
     html.Div([ 
     html.H2(children='Custom Weather Graph'),
-
     html.Div([
         html.Div("Data Type:", className='column_label'),
         html.Div(children=[
@@ -215,20 +206,33 @@ def serve_layout():
     html.Div([
         html.Div("Start Time:", className='column_label'),
         html.Div(children=[
+            dcc.DatePickerSingle(
+                id='start-date-in',
+                display_format='YYYY-MM-DD', 
+                date=datetime.datetime.now().date() - datetime.timedelta(days=1)
+            ),
             dcc.Input(
                 id='start-time-in',
-                value=(endTime - datetime.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
-                type='text'
+                #value=(endTime - datetime.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
+                value=(endTime - datetime.timedelta(days=1)).strftime("%H:%M:%S"),
+                type='text',
+                style={'width': '75px'}
        )], className='column_label')
     ], className='row'),
     
     html.Div([
         html.Div("End Time:", className='column_label'),
         html.Div(children=[
+            dcc.DatePickerSingle(
+                id='end-date-in',
+                display_format='YYYY-MM-DD', 
+                date=datetime.datetime.now().date()
+            ),
             dcc.Input(
                 id='end-time-in',
-                value=endTime.strftime("%Y-%m-%d %H:%M:%S"),
-                type='text'
+                value=endTime.strftime("%H:%M:%S"),
+                type='text',
+                style={'width': '75px'}
        )], className='column_label')
     ], className='row'),
 
@@ -265,6 +269,7 @@ def serve_layout():
        )], className='column_label')
     ], className='row'),
    
+    html.P(children='Usage Notes: Calculation Type input is not used if Plot Step is ALL. STATS calculation type is only applicable to temperature plots.'),
     html.Button('Generate', id='generate-val', n_clicks=0),
     
     #html.Label('Output'),
@@ -292,7 +297,7 @@ def serve_layout():
 #], style={'columnCount': 1})
     ])
 
-app = dash.Dash(__name__, update_title=None, requests_pathname_prefix='/wx/')
+app = dash.Dash(__name__, title="Weather Dashboard", requests_pathname_prefix='/wx/')
 app.layout = serve_layout
 
 # Callbacks
@@ -318,20 +323,22 @@ app.layout = serve_layout
 #@app.callback(dash.dependencies.Output('graph-update-signal', 'children'),
 #@app.callback(dash.dependencies.Output('wx-graph', 'figure'),
     [dash.dependencies.Input('generate-val', 'n_clicks')],
+    [dash.dependencies.State('start-date-in', 'date')],
+    [dash.dependencies.State('end-date-in', 'date')],
     [dash.dependencies.State('data-type-drop', 'value')],
     [dash.dependencies.State('start-time-in', 'value')],
     [dash.dependencies.State('end-time-in', 'value')],
     [dash.dependencies.State('calc-type-drop', 'value')],
     [dash.dependencies.State('plot-step-drop', 'value')])
-def update_graph(n_clicks, data_type, start_time, end_time, calc_type, plot_step):
+def update_graph(n_clicks, start_date, end_date, data_type, start_time, end_time, calc_type, plot_step):
     #global figOrig
-
     if (n_clicks == 0): # Ignore if button not clicked
         return {}
     
     # Get inputs
-    startTime = datetime.datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
-    endTime = datetime.datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+    startTime = datetime.datetime.strptime("{} {}".format(start_date, start_time), "%Y-%m-%d %H:%M:%S")
+    endTime = datetime.datetime.strptime("{} {}".format(end_date, end_time), "%Y-%m-%d %H:%M:%S")
+    #endTime = datetime.datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
     plotStep = PlotStep[plot_step]
     calcType = CalcType[calc_type]
             
@@ -361,7 +368,7 @@ def update_graph(n_clicks, data_type, start_time, end_time, calc_type, plot_step
 
 
     # Get new graph
-    fig = get_graph_data(graphData)
+    fig = weatherPlot.getGraph(graphData)
     #if (fig != None):
     #    figOrig = fig
     

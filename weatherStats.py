@@ -6,6 +6,11 @@ from calendar import monthrange
 import numpy as np
 from enum import IntEnum
 from threading import Thread
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
 
 def capitalizeFirst(strIn):
     return strIn[0].upper() + strIn[1:]
@@ -160,11 +165,11 @@ class WeatherPlotter:
 
     def getTempPlotData(self, startTime, endTime, step):
         # Create a plot with min, max, and average temps for desired time span and step
-        minTime, minData = getData('outTemp', startTime, endTime, step, CalcType.MIN) # max
+        minTime, minData = self.getData('outTemp', startTime, endTime, step, CalcType.MIN) # max
         minType = ['min'] * len(minTime)
-        maxTime, maxData = getData('outTemp', startTime, endTime, step, CalcType.MAX) # min
+        maxTime, maxData = self.getData('outTemp', startTime, endTime, step, CalcType.MAX) # min
         maxType = ['max'] * len(maxTime)
-        avgTime, avgData = getData('outTemp', startTime, endTime, step, CalcType.AVG) # avg
+        avgTime, avgData = self.getData('outTemp', startTime, endTime, step, CalcType.AVG) # avg
         avgType = ['avg'] * len(avgTime)
             
         # Combine data
@@ -174,17 +179,35 @@ class WeatherPlotter:
 
         return allTime, allData, allType
 
+
+    def getRainPlotData(self, startTime, endTime):
+        # Get data of running sum of rain over requested time span
+        times, rainValues = self.getData('rain', startTime, endTime, PlotStep.ALL)
+        
+        rainSumValues = np.zeros(rainValues.shape)
+        rainSum = 0.0
+        for i in range(len(rainValues)):
+            rainSum += rainValues[i]
+            rainSumValues[i] = rainSum
+
+        # Get rain rate data
+        timesRate, rainRateValues = self.getData('rainRate', startTime, endTime, PlotStep.ALL)
+
+        return {'rainSum': [times, rainSumValues], 'rainRate': [timesRate, rainRateValues]}
+
     def createTempPlot(self, startTime, endTime, step):
         # Create a plot with min, max, and average temps for desired time span and step
         fig, ax = plt.subplots()
         fig.set_tight_layout(True)
 
-        ax = weatherPlot.createDataPlot('outTemp', startTime, endTime, PlotStep.MONTHLY, CalcType.MIN, ax=ax) # max
-        ax = weatherPlot.createDataPlot('outTemp', startTime, endTime, PlotStep.MONTHLY, CalcType.MAX, ax=ax) # min
-        ax = weatherPlot.createDataPlot('outTemp', startTime, endTime, PlotStep.MONTHLY, CalcType.AVG, ax=ax) # avg
+        ax = self.createDataPlot('outTemp', startTime, endTime, PlotStep.MONTHLY, CalcType.MIN, ax=ax) # max
+        ax = self.createDataPlot('outTemp', startTime, endTime, PlotStep.MONTHLY, CalcType.MAX, ax=ax) # min
+        ax = self.createDataPlot('outTemp', startTime, endTime, PlotStep.MONTHLY, CalcType.AVG, ax=ax) # avg
     
         ax.set_title("Temperature Summary Plot - {} - {} to {}".format(step.name.capitalize(), startTime.strftime("%Y-%m-%d %H:%M"), endTime.strftime("%Y-%m-%d %H:%M")))
-   
+
+        return fig
+
     def getAvg(self, entry, tableName, startTimeEpoch, endTimeEpoch):
         # Get min and max and average
         if ("day" in tableName):
@@ -203,6 +226,8 @@ class WeatherPlotter:
         return dataArray
           
     def getData(self, entry, startTime, endTime, step, calcType=CalcType.MAX):
+        # Retrieve requested data from the database
+
         startTimeEpoch = datetime.datetime.timestamp(startTime)
         endTimeEpoch = datetime.datetime.timestamp(endTime)
         
@@ -267,6 +292,7 @@ class WeatherPlotter:
         else:
             #dataTable = self.getFromDatabase('SELECT dateTime, {} FROM archive WHERE dateTime between {} AND {}'.format(entry, startTimeEpoch, endTimeEpoch))
             dataTable = self.getFromDatabase('SELECT dateTime, {} FROM {} WHERE dateTime between {} AND {}'.format(databaseEntry, tableName, startTimeEpoch, endTimeEpoch))
+            print('SELECT dateTime, {} FROM {} WHERE dateTime between {} AND {}'.format(databaseEntry, tableName, startTimeEpoch, endTimeEpoch))
             dataArray = np.array(dataTable)
 
         # Check if plot data needs to be calculated
@@ -305,17 +331,69 @@ class WeatherPlotter:
         if (plotRequest['type'] == 'tempPlot'):
             dates, data, types = self.getTempPlotData(plotRequest['startTime'], plotRequest['endTime'], plotRequest['plotStep'])
             dataRequest = copy.deepcopy(plotRequest)
-            dataRequest['dates'] = dates
-            dataRequest['data'] = data
-            dataRequest['types'] = types
+            dataRequest['data'] = {'dates': dates, 'data': data, 'types': types}
             dataOut = dataRequest 
+        elif (plotRequest['type'] == 'rainPlot'):
+            
+
+            rainPlotData = self.getRainPlotData(plotRequest['startTime'], plotRequest['endTime'])
+            dataRequest = copy.deepcopy(plotRequest)
+            dataRequest['data'] = rainPlotData
+            dataOut = dataRequest
         else:
             dates, data = self.getData(plotRequest['data_type'], plotRequest['startTime'], plotRequest['endTime'], plotRequest['plotStep'], plotRequest['calcType'])
             dataRequest = copy.deepcopy(plotRequest)
-            dataRequest.update({'type': 'standard', 'dates': dates, 'data': data})
+            dataRequest['data'] = {'dates': dates, 'data': data}
             dataOut = dataRequest 
 
         return dataOut
+
+    def getGraph(self, plotRequest):
+        # Get graph data and create graph            
+        graphData = self.getPlotData(plotRequest)
+
+        return self.createGraph(graphData)
+
+    def createGraph(self, graphData):
+        if (graphData == None):
+            return {}
+        
+        if (graphData['type'] == 'tempPlot'):
+            df = pd.DataFrame({
+                "dates": graphData['data']['dates'],
+                graphData['data_type']: graphData['data']['data'],
+                "types": graphData['data']['types']})
+            title = "Temperature Summary Plot - {} - {} to {}".format(graphData['plotStep'].name.capitalize(), graphData['startTime'].strftime("%Y-%m-%d %H:%M"), graphData['endTime'].strftime("%Y-%m-%d %H:%M"))
+            fig = px.scatter(df, x="dates", y=graphData['data_type'], color="types", title=title)
+            yaxis_title = "{} ({})".format(graphData['data_type'], self.units[graphData['data_type']])
+            fig.update_layout(xaxis_title='Date', yaxis_title=yaxis_title, legend_title='')
+
+        elif (graphData['type'] == 'rainPlot'):
+            fig = make_subplots()
+        #return {'rainSum': [times, rainSumValues], 'rainRate': [times, rainRateValues]}
+            #df = pd.DataFrame({
+            #    "dates": graphData['dates'],
+            #    graphData['data_type']: graphData['data']})
+           
+            fig.add_trace(go.Scatter(x=graphData['data']['rainSum'][0], y=graphData['data']['rainSum'][1], name='Rain Total', mode='markers'))
+            fig.add_trace(go.Scatter(x=graphData['data']['rainRate'][0], y=graphData['data']['rainRate'][1], name='Rain Rate', mode='markers'))
+            
+
+            #fig = px.scatter(df, x="dates", y=graphData['data_type'], title=title)
+            title = "Rain Summary Plot - {} to {}".format(graphData['startTime'].strftime("%Y-%m-%d %H:%M"), graphData['endTime'].strftime("%Y-%m-%d %H:%M"))
+            yaxis_title = "{}/{} ({}/{})".format('Rain Total', 'Rain Rate', self.units['rain'], self.units['rainRate'])
+            fig.update_layout(xaxis_title='Date',yaxis_title=yaxis_title)
+
+        else: # standard
+            df = pd.DataFrame({
+                "dates": graphData['data']['dates'],
+                graphData['data_type']: graphData['data']['data']})
+            title = "{} of {} - {} - {} to {}".format(graphData['calcType'].name.capitalize(), capitalizeFirst(graphData['data_type']), graphData['plotStep'].name.capitalize(), graphData['startTime'].strftime("%Y-%m-%d %H:%M"), graphData['endTime'].strftime("%Y-%m-%d %H:%M"))
+            fig = px.scatter(df, x="dates", y=graphData['data_type'], title=title)
+            yaxis_title = "{} ({})".format(graphData['data_type'], self.units[graphData['data_type']])
+            fig.update_layout(xaxis_title='Date',yaxis_title=yaxis_title)
+
+        return fig
 
 
 class WeatherPlotThread(Thread):
